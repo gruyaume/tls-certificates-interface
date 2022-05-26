@@ -6,9 +6,20 @@
 This library contains the Requires and Provides classes for handling
 the tls-certificates interface.
 
-## Provider charm
-Example:
+## Getting Started
+
+From a charm directory, fetch the library using `charmcraft`:
+
+```shell
+charmcraft fetch-lib charms.tls_certificates_interface.v0.tls_certificates
 ```
+
+You will also need to add the following library to the charm's `requirements.txt` file:
+- jsonschema
+
+### Provider charm
+Example:
+```python
 from charms.tls_certificates_interface.v0.tls_certificates import (
     Cert,
     CertificatesProviderCharmEvents,
@@ -17,31 +28,30 @@ from charms.tls_certificates_interface.v0.tls_certificates import (
 from ops.charm import CharmBase
 
 
-class ExampleProviderCharm(CharmBase):
-    on = CertificatesProviderCharmEvents()
+class ExampleRequirerCharm(CharmBase):
+    on = CertificatesRequirerCharmEvents()
 
     def __init__(self, *args):
         super().__init__(*args)
-        self.framework.observe(self.on.certificates_request, self._on_certificate_request)
-        self.framework.observe(self.on.ca_request, self._on_ca_request)
-        self.insecure_certificates = InsecureCertificatesProvides(self, "certificates")
-
-    def _on_certificate_request(self, event):
-        common_name = event.common_name
-        certificate = Cert(cert="whatever certificate", key="whatever key")
-        self.insecure_certificates.set_relation_certificate(
-            common_name=common_name, certificate=certificate
+        self.framework.observe(self.on.certificate_available, self._on_certificate_available)
+        self.insecure_certificates = InsecureCertificatesRequires(self, "certificates")
+        self.insecure_certificates.request_certificate(
+            cert_type="client",
+            common_name="whatever common name",
         )
 
-    def _on_ca_request(self, event):
-        ca = "whatever ca"
-        self.insecure_certificates.set_relation_ca(ca=ca)
+    def _on_certificate_available(self, event):
+        certificate_data = event.certificate_data
+        print(certificate_data["common_name"])
+        print(certificate_data["key"])
+        print(certificate_data["ca"])
+        print(certificate_data["cert"])
 ```
 
-## Requirer charm
+### Requirer charm
 Example:
 
-```
+```python
 from charms.tls_certificates_interface.v0.tls_certificates import (
     CertificatesRequirerCharmEvents,
     InsecureCertificatesRequires,
@@ -63,10 +73,7 @@ class ExampleRequirerCharm(CharmBase):
 
     def _on_certificates_available(self, event):
         certificate_data = event.certificate_data
-        cert = certificate_data["cert"]
-        key = certificate_data["key"]
-        print(cert)
-        print(key)
+        print(certificate_data[""])
 ```
 
 """
@@ -86,199 +93,132 @@ LIBAPI = 0
 
 # Increment this PATCH version before using `charmcraft publish-lib` or reset
 # to 0 if you are raising the major API version
-LIBPATCH = 2
+LIBPATCH = 11
 
 REQUIRER_JSON_SCHEMA = {
     "$schema": "http://json-schema.org/draft-04/schema#",
     "type": "object",
     "examples": [
         {
-            "unit_name": "web-app-0",
-            "sans": ["canonical.com"],
-            "cert_requests": [{"common_name": "webapp.canonical.com"}],
+            "cert_requests": [{"common_name": "whatever.com"}],
         }
     ],
-    "properties": {
-        "common_name": {
-            "type": "string",
-            "desctiption": "Server common name",
-            "examples": ["canonical.com", "ubuntu.com"],
-            "description": "Server common name",
-        },
-        "sans": {
-            "type": "array",
-            "description": "Server list of server SAN's (subject alternative names)",
-            "examples": [
-                [
-                    "DNS Name=canonical.com",
-                    "DNS Name=www.canonical.com",
-                    "DNS Name=www.support.canonical.com",
-                ],
-                [
-                    "DNS Name=ubuntu.com",
-                    "DNS Name=www.ubuntu.com",
-                    "DNS Name=www.support.ubuntu.com",
-                ],
-            ],
-            "items": {"type": "string"},
-        },
-        "cert_requests": {
-            "type": "array",
-            "description": "List of server cert requests",
-            "examples": [[{"common_name": "abcd.canonical.com"}]],
-            "items": {
-                "type": "object",
-                "properties": {
-                    "sans": {"type": "array", "items": {"type": "string"}},
-                    "common_name": {"type": "string"},
-                },
-                "required": ["common_name"],
+    "anyOf": [
+        {
+            "required": ["cert_requests"],
+            "type": "object",
+            "properties": {
+                "cert_requests": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "sans": {"type": "array", "items": {"type": "string"}},
+                            "common_name": {"type": "string"},
+                        },
+                        "required": ["common_name"],
+                    },
+                }
             },
         },
-        "client_cert_requests": {
-            "type": "array",
-            "description": "List of client cert requests",
-            "examples": [[{"common_name": "abcd.canonical.com"}]],
-            "items": {
-                "type": "object",
-                "properties": {
-                    "sans": {"type": "array", "items": {"type": "string"}},
-                    "common_name": {"type": "string"},
-                },
-                "required": ["common_name"],
+        {
+            "type": "object",
+            "required": ["client_cert_requests"],
+            "properties": {
+                "client_cert_requests": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "sans": {"type": "array", "items": {"type": "string"}},
+                            "common_name": {"type": "string"},
+                        },
+                        "required": ["common_name"],
+                    },
+                }
             },
         },
-        "application_cert_requests": {
-            "type": "array",
-            "description": "List of application cert requests",
-            "examples": [[{"common_name": "abcd.canonical.com"}]],
-            "items": {
-                "type": "object",
-                "properties": {
-                    "sans": {"type": "array", "items": {"type": "string"}},
-                    "common_name": {"type": "string"},
-                },
-                "required": ["common_name"],
-            },
-        },
-        "unit_name": {
-            "examples": ["whatever-operator-0", "whatever-operator-1"],
-            "type": "string",
-        },
-    },
-    "required": ["unit_name"],
+    ],
 }
 
 PROVIDER_JSON_SCHEMA = {
     "$schema": "http://json-schema.org/draft-04/schema#",
     "type": "object",
     "description": "The root schema comprises the entire JSON document. It contains the data "
-    "bucket content and format for the requirer of the tls-certificates relation "
-    "to ask TLS certificates to the provider.",
+    "bucket content and format for the provider of the tls-certificates relation "
+    "to provide certificates to the requirer.",
     "examples": [
         {
-            "unit_name": "web-app-0",
-            "sans": ["canonical.com"],
-            "cert_requests": [{"common_name": "webapp.canonical.com"}],
+            "certificates": [
+                {
+                    "common_name": "banana.com",
+                    "key": "afaefawfawfawfaafe.key",
+                    "cert": "abavab.crt",
+                    "ca": "aefawe",
+                },
+                {
+                    "common_name": "pizza.com",
+                    "key": "aaaaaaa.key",
+                    "cert": "aaa.crt",
+                    "ca": "bbbbada",
+                },
+            ],
         }
     ],
     "properties": {
-        "common_name": {
-            "type": "string",
-            "description": "Server common name",
-            "examples": ["canonical.com", "ubuntu.com"],
-        },
-        "sans": {
+        "certificates": {
             "type": "array",
-            "description": "List of server SAN's (subject alternative names)",
-            "examples": [
-                [
-                    "DNS Name=canonical.com",
-                    "DNS Name=www.canonical.com",
-                    "DNS Name=www.support.canonical.com",
-                ],
-                [
-                    "DNS Name=ubuntu.com",
-                    "DNS Name=www.ubuntu.com",
-                    "DNS Name=www.support.ubuntu.com",
-                ],
-            ],
-            "items": {"type": "string"},
-        },
-        "cert_requests": {
-            "type": "array",
-            "description": "List of server cert requests",
-            "examples": [[{"common_name": "abcd.canonical.com"}]],
             "items": {
                 "type": "object",
                 "properties": {
-                    "sans": {"type": "array", "items": {"type": "string"}},
                     "common_name": {"type": "string"},
+                    "key": {"type": "string"},
+                    "cert": {"type": "string"},
+                    "ca": {"type": "string"},
                 },
-                "required": ["common_name"],
+                "required": ["common_name", "key", "cert", "ca"],
             },
-        },
-        "client_cert_requests": {
-            "type": "array",
-            "description": "List of client cert requests",
-            "examples": [[{"common_name": "abcd.canonical.com"}]],
-            "items": {
-                "type": "object",
-                "properties": {
-                    "sans": {"type": "array", "items": {"type": "string"}},
-                    "common_name": {"type": "string"},
-                },
-                "required": ["common_name"],
-            },
-        },
-        "application_cert_requests": {
-            "type": "array",
-            "description": "List of application cert requests",
-            "examples": [[{"common_name": "abcd.canonical.com"}]],
-            "items": {
-                "type": "object",
-                "properties": {
-                    "sans": {"type": "array", "items": {"type": "string"}},
-                    "common_name": {"type": "string"},
-                },
-                "required": ["common_name"],
-            },
-        },
-        "unit_name": {
-            "description": "Juju Unit name. Explicit set of unit_name needed to support use of "
-            "this interface in cross model contexts.",
-            "examples": ["whatever-operator-0", "whatever-operator-1"],
-            "type": "string",
-        },
+        }
     },
-    "required": ["unit_name"],
+    "required": ["certificates"],
 }
 
 logger = logging.getLogger(__name__)
 
 
 class Cert(TypedDict):
+    common_name: str
     cert: str
     key: str
+    ca: str
 
 
-class CertificatesAvailableEvent(EventBase):
-    def __init__(self, handle, certificates_data: Cert = None):
+class CertificateAvailableEvent(EventBase):
+    def __init__(self, handle, certificate_data: Cert):
         super().__init__(handle)
-        self.certificates_data = certificates_data
+        self.certificate_data = certificate_data
+
+    def snapshot(self):
+        return {"certificate_data": self.certificate_data}
+
+    def restore(self, snapshot):
+        self.certificate_data = snapshot["certificate_data"]
 
 
-class CertificatesRequestEvent(EventBase):
+class CertificateRequestEvent(EventBase):
     def __init__(self, handle, common_name: str, sans: str, cert_type: str):
         super().__init__(handle)
         self.common_name = common_name
         self.sans = sans
         self.cert_type = cert_type
 
+    def snapshot(self):
+        return {"common_name": self.common_name, "sans": self.sans, "cert_type": self.cert_type}
 
-class CARequest(EventBase):
-    def __init__(self, handle):
-        super().__init__(handle)
+    def restore(self, snapshot):
+        self.common_name = snapshot["common_name"]
+        self.sans = snapshot["sans"]
+        self.cert_type = snapshot["cert_type"]
 
 
 def _load_relation_data(raw_relation_data: dict) -> dict:
@@ -292,12 +232,11 @@ def _load_relation_data(raw_relation_data: dict) -> dict:
 
 
 class CertificatesProviderCharmEvents(CharmEvents):
-    certificates_request = EventSource(CertificatesRequestEvent)
-    ca_request = EventSource(CARequest)
+    certificate_request = EventSource(CertificateRequestEvent)
 
 
 class CertificatesRequirerCharmEvents(CharmEvents):
-    certificates_available = EventSource(CertificatesAvailableEvent)
+    certificate_available = EventSource(CertificateAvailableEvent)
 
 
 class InsecureCertificatesProvides(Object):
@@ -322,23 +261,28 @@ class InsecureCertificatesProvides(Object):
         except exceptions.ValidationError:
             return False
 
-    def set_relation_ca(self, ca: str):
-        """
-        Public method that should be used by the provider charm to set relation CA.
-        :param ca: Certificate Authority certificate
-        """
-        logging.info(f"Setting CA to {ca} for {self.model.unit}")
-        certificates_relation = self.model.get_relation(self.relationship_name)
-        certificates_relation.data[self.model.unit]["ca"] = str(ca)
-        certificates_relation.data[self.model.unit]["chain"] = str(ca)
-
-    def set_relation_certificate(self, common_name: str, certificate: Cert):
+    def set_relation_certificate(self, certificate: Cert):
         logging.info(f"Setting Certificate to {certificate} for {self.model.unit}")
         certificates_relation = self.model.get_relation(self.relationship_name)
-        certificates_relation.data[self.model.unit][common_name] = json.dumps(certificate)
+        current_certificates_json_dump = certificates_relation.data[self.model.unit].get(  # type: ignore[union-attr]  # noqa: E501
+            "certificates"
+        )
+        current_certificate_list = []
+        if current_certificates_json_dump:
+            current_certificate_list = json.loads(current_certificates_json_dump)
+            for cert in current_certificate_list:
+                if cert["common_name"] == certificate["common_name"]:
+                    logger.info("Certificate with the same common name already existed")
+                    return
+        current_certificate_list.append(certificate)
+        certificates_relation.data[self.model.unit]["certificates"] = json.dumps(  # type: ignore[union-attr]  # noqa: E501
+            current_certificate_list
+        )
 
     def _on_relation_changed(self, event):
+        logger.info(f"Raw relation data: {event.relation.data}")
         relation_data = _load_relation_data(event.relation.data[event.unit])
+        logger.info(f"Parsed relation data: {relation_data}")
         if not relation_data:
             logger.info("No relation data - Deferring")
             event.defer()
@@ -347,21 +291,14 @@ class InsecureCertificatesProvides(Object):
             logger.info("Relation data did not pass JSON Schema validation - Deferring")
             event.defer()
             return
-        self.charm.on.ca_request.emit()
-        if relation_data.get("common_name"):
-            self.charm.on.certificates_request.emit(
-                common_name=relation_data.get("common_name"),
-                sans=relation_data.get("sans"),
-                cert_type="server",
-            )
         for server_cert_request in relation_data.get("cert_requests", {}):
-            self.charm.on.certificates_request.emit(
+            self.charm.on.certificate_request.emit(
                 common_name=server_cert_request.get("common_name"),
                 sans=server_cert_request.get("sans"),
                 cert_type="server",
             )
         for client_cert_requests in relation_data.get("client_cert_requests", {}):
-            self.charm.on.certificates_request.emit(
+            self.charm.on.certificate_request.emit(
                 common_name=client_cert_requests.get("common_name"),
                 sans=client_cert_requests.get("sans"),
                 cert_type="client",
@@ -391,11 +328,20 @@ class InsecureCertificatesRequires(Object):
         common_name: str,
         sans: list = None,
     ):
+        if not sans:
+            sans = []
         logger.info("Received request to create certificate")
         relation = self.model.get_relation(self.relationship_name)
-        relation_data = _load_relation_data(relation.data[self.model.unit.name])
+        if not relation:
+            logger.info(
+                f"Relation {self.relationship_name} does not exist - "
+                f"The certificate request can't be completed"
+            )
+            return
+        logger.info(f"Relation data: {relation.data}")
+        relation_data = _load_relation_data(relation.data[self.model.unit])
         certificate_key_mapping = {"client": "client_cert_requests", "server": "cert_requests"}
-        new_certificate_request = {"common_name": common_name, "sans": json.dumps(sans)}
+        new_certificate_request = {"common_name": common_name, "sans": sans}
         if certificate_key_mapping[cert_type] in relation_data:
             certificate_request_list = relation_data[certificate_key_mapping[cert_type]]
             if new_certificate_request in certificate_request_list:
@@ -404,7 +350,7 @@ class InsecureCertificatesRequires(Object):
             certificate_request_list.append(new_certificate_request)
         else:
             certificate_request_list = [new_certificate_request]
-        relation.data[self.model.unit.name][certificate_key_mapping[cert_type]] = json.dumps(
+        relation.data[self.model.unit][certificate_key_mapping[cert_type]] = json.dumps(
             certificate_request_list
         )
         logger.info("Certificate request sent to provider")
@@ -419,17 +365,12 @@ class InsecureCertificatesRequires(Object):
 
     def _on_relation_changed(self, event):
         if self.model.unit.is_leader():
-            logger.info("relation data: %s", repr(event.relation.data[event.unit]))
+            logger.info(f"Raw relation data: {event.relation.data}")
             relation_data = _load_relation_data(event.relation.data[event.unit])
+            logger.info(f"Parsed relation data: {relation_data}")
             if not self._relation_data_is_valid(relation_data):
                 logger.info("Relation data did not pass JSON Schema validation - Deferring")
                 event.defer()
                 return
-            certificates = event.relation.data[event.app].get(self.common_name)
-            event.relation.data[self.model.unit]["common_name"] = self.common_name
-            event.relation.data[self.model.unit]["unit_name"] = self.model.unit.name
-            event.relation.data[self.model.unit]["sans"] = json.dumps(self.sans)
-            if certificates:
-                self.charm.on.certificates_available.emit(
-                    certificates_data=Cert(cert=certificates["cert"], key=certificates["key"])
-                )
+            for certificate in relation_data["certificates"]:
+                self.charm.on.certificate_available.emit(certificate_data=certificate)
