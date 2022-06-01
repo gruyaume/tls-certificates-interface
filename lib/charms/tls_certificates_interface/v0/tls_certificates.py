@@ -22,19 +22,51 @@ Example:
 ```python
 from charms.tls_certificates_interface.v0.tls_certificates import (
     Cert,
-    CertificatesProviderCharmEvents,
     InsecureCertificatesProvides,
 )
 from ops.charm import CharmBase
 
 
-class ExampleRequirerCharm(CharmBase):
-    on = CertificatesRequirerCharmEvents()
-
+class ExampleProviderCharm(CharmBase):
     def __init__(self, *args):
         super().__init__(*args)
-        self.framework.observe(self.on.certificate_available, self._on_certificate_available)
+        self.insecure_certificates = InsecureCertificatesProvides(self, "certificates")
+        self.framework.observe(
+            self.insecure_certificates.on.certificates_request, self._on_certificate_request
+        )
+
+    def _on_certificate_request(self, event):
+        common_name = event.common_name
+        sans = event.sans
+        cert_type = event.cert_type
+        certificate = self._generate_certificate(common_name, sans, cert_type)
+
+        self.insecure_certificates.set_relation_certificate(
+            certificate=certificate, relation_id=event.relation.id
+        )
+
+    def _generate_certificate(self, common_name: str, sans: list, cert_type: str) -> Cert:
+        return Cert(
+            common_name=common_name, cert="whatever cert", key="whatever key", ca="whatever ca"
+        )
+```
+
+### Requirer charm
+Example:
+
+```python
+from charms.tls_certificates_interface.v0.tls_certificates import InsecureCertificatesRequires
+from ops.charm import CharmBase
+
+
+class ExampleRequirerCharm(CharmBase):
+    def __init__(self, *args):
+        super().__init__(*args)
+
         self.insecure_certificates = InsecureCertificatesRequires(self, "certificates")
+        self.framework.observe(
+            self.insecure_certificates.on.certificate_available, self._on_certificate_available
+        )
         self.insecure_certificates.request_certificate(
             cert_type="client",
             common_name="whatever common name",
@@ -46,34 +78,6 @@ class ExampleRequirerCharm(CharmBase):
         print(certificate_data["key"])
         print(certificate_data["ca"])
         print(certificate_data["cert"])
-```
-
-### Requirer charm
-Example:
-
-```python
-from charms.tls_certificates_interface.v0.tls_certificates import (
-    CertificatesRequirerCharmEvents,
-    InsecureCertificatesRequires,
-)
-from ops.charm import CharmBase
-
-
-class ExampleRequirerCharm(CharmBase):
-    on = CertificatesRequirerCharmEvents()
-
-    def __init__(self, *args):
-        super().__init__(*args)
-        self.framework.observe(self.on.certificates_available, self._on_certificates_available)
-        self.insecure_certificates = InsecureCertificatesRequires(self, "certificates")
-        self.insecure_certificates.request_certificate(
-            cert_type="client",
-            common_name="whatever common name",
-        )
-
-    def _on_certificates_available(self, event):
-        certificate_data = event.certificate_data
-        print(certificate_data[""])
 ```
 
 """
@@ -93,7 +97,7 @@ LIBAPI = 0
 
 # Increment this PATCH version before using `charmcraft publish-lib` or reset
 # to 0 if you are raising the major API version
-LIBPATCH = 11
+LIBPATCH = 13
 
 REQUIRER_JSON_SCHEMA = {
     "$schema": "http://json-schema.org/draft-04/schema#",
@@ -198,27 +202,34 @@ class CertificateAvailableEvent(EventBase):
         super().__init__(handle)
         self.certificate_data = certificate_data
 
-    def snapshot(self):
+    def snapshot(self) -> dict:
         return {"certificate_data": self.certificate_data}
 
-    def restore(self, snapshot):
+    def restore(self, snapshot: dict):
         self.certificate_data = snapshot["certificate_data"]
 
 
 class CertificateRequestEvent(EventBase):
-    def __init__(self, handle, common_name: str, sans: str, cert_type: str):
+    def __init__(self, handle, common_name: str, sans: str, cert_type: str, relation_id: int):
         super().__init__(handle)
         self.common_name = common_name
         self.sans = sans
         self.cert_type = cert_type
+        self.relation_id = relation_id
 
-    def snapshot(self):
-        return {"common_name": self.common_name, "sans": self.sans, "cert_type": self.cert_type}
+    def snapshot(self) -> dict:
+        return {
+            "common_name": self.common_name,
+            "sans": self.sans,
+            "cert_type": self.cert_type,
+            "relation_id": self.relation_id,
+        }
 
-    def restore(self, snapshot):
+    def restore(self, snapshot: dict):
         self.common_name = snapshot["common_name"]
         self.sans = snapshot["sans"]
         self.cert_type = snapshot["cert_type"]
+        self.relation_id = snapshot["relation_id"]
 
 
 def _load_relation_data(raw_relation_data: dict) -> dict:
@@ -240,6 +251,9 @@ class CertificatesRequirerCharmEvents(CharmEvents):
 
 
 class InsecureCertificatesProvides(Object):
+
+    on = CertificatesProviderCharmEvents()
+
     def __init__(self, charm, relationship_name: str):
         super().__init__(charm, relationship_name)
         self.framework.observe(
@@ -261,9 +275,11 @@ class InsecureCertificatesProvides(Object):
         except exceptions.ValidationError:
             return False
 
-    def set_relation_certificate(self, certificate: Cert):
+    def set_relation_certificate(self, certificate: Cert, relation_id: int):
         logging.info(f"Setting Certificate to {certificate} for {self.model.unit}")
-        certificates_relation = self.model.get_relation(self.relationship_name)
+        certificates_relation = self.model.get_relation(
+            relation_name=self.relationship_name, relation_id=relation_id
+        )
         current_certificates_json_dump = certificates_relation.data[self.model.unit].get(  # type: ignore[union-attr]  # noqa: E501
             "certificates"
         )
@@ -292,20 +308,25 @@ class InsecureCertificatesProvides(Object):
             event.defer()
             return
         for server_cert_request in relation_data.get("cert_requests", {}):
-            self.charm.on.certificate_request.emit(
+            self.on.certificate_request.emit(
                 common_name=server_cert_request.get("common_name"),
                 sans=server_cert_request.get("sans"),
                 cert_type="server",
+                relation_id=event.relation.id,
             )
         for client_cert_requests in relation_data.get("client_cert_requests", {}):
-            self.charm.on.certificate_request.emit(
+            self.on.certificate_request.emit(
                 common_name=client_cert_requests.get("common_name"),
                 sans=client_cert_requests.get("sans"),
                 cert_type="client",
+                relation_id=event.relation.id,
             )
 
 
 class InsecureCertificatesRequires(Object):
+
+    on = CertificatesRequirerCharmEvents()
+
     def __init__(
         self,
         charm,
@@ -373,4 +394,4 @@ class InsecureCertificatesRequires(Object):
                 event.defer()
                 return
             for certificate in relation_data["certificates"]:
-                self.charm.on.certificate_available.emit(certificate_data=certificate)
+                self.on.certificate_available.emit(certificate_data=certificate)
